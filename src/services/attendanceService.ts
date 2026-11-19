@@ -155,11 +155,27 @@ export async function recordAttendance(data: RecordAttendanceInput) {
   }
 
   // Find or create lesson (BR-15: unique by levelId + date)
-  const lesson = await prisma.lesson.upsert({
-    where: { levelId_date: { levelId: data.levelId, date: data.lessonDate } },
-    update: {},
-    create: { levelId: data.levelId, date: data.lessonDate },
-  });
+  let lesson: { id: string; levelId: string; date: string } | null;
+  if (data.lessonDate === today) {
+    // Today: create or fetch existing lesson
+    lesson = await prisma.lesson.upsert({
+      where: { levelId_date: { levelId: data.levelId, date: data.lessonDate } },
+      update: {},
+      create: { levelId: data.levelId, date: data.lessonDate },
+    });
+  } else {
+    // Past date: lesson must already exist — never create retroactively
+    lesson = await prisma.lesson.findUnique({
+      where: { levelId_date: { levelId: data.levelId, date: data.lessonDate } },
+    });
+    if (!lesson) {
+      throw new AppError(
+        400,
+        'NO_LESSON_ON_DATE',
+        'لا توجد حصة لهذا المستوى في التاريخ المحدد. لا يمكن تسجيل الحضور.'
+      );
+    }
+  }
 
   // BR-15: At most one attendance per student per lesson
   const existingAttendance = await prisma.attendance.findFirst({
@@ -553,7 +569,8 @@ export async function getLessonAttendance(levelId: string, date: string) {
   if (!lesson) {
     return {
       lesson: null,
-      lessonNumber,
+      lessonExists: false,
+      lessonNumber: 0,
       attendances: [],
       informationalAbsentList: [],
       levelId,
@@ -597,6 +614,7 @@ export async function getLessonAttendance(levelId: string, date: string) {
 
   return {
     lesson,
+    lessonExists: true,
     lessonNumber,
     attendances: lesson.attendances,
     informationalAbsentList: absentStudents.map((s) => ({
@@ -652,12 +670,16 @@ export async function getStudentAttendanceReport(studentId: string) {
         fullName: student.fullName,
         enrollmentDate: student.enrollmentDate,
         status: student.status,
+        levelName: '',
+        subjectName: '',
+        combination: '',
       },
       summary: {
         totalHeld: 0,
         totalAttended: 0,
         totalAbsent: 0,
       },
+      records: [],
       lessons: [],
     };
   }
@@ -748,15 +770,20 @@ export async function getStudentAttendanceReport(studentId: string) {
       date: lesson.date,
       month: lessonMonth,
       monthlyLessonNumber,
+      lessonNumber: monthlyLessonNumber,
       combination: `${lesson.level.subject.name} - ${lesson.level.name}`,
       levelId: lesson.levelId,
+      levelName: lesson.level.name,
+      subjectName: lesson.level.subject.name,
       status: isPresent ? ('PRESENT' as const) : ('ABSENT' as const),
       statusLabel: isPresent ? 'حاضر' : 'غائب',
       attendanceId: attendedEntry?.id ?? null,
-      recordedBy: attendedEntry?.recordedBy?.name ?? null,
+      recordedBy: attendedEntry?.recordedBy ?? (attendedEntry?.recordedBy?.name ? { id: attendedEntry.recordedBy.id, name: attendedEntry.recordedBy.name } : null),
       entryTimestamp: attendedEntry?.entryTimestamp ?? null,
     });
   }
+
+  const latestCombo = student.combinationHistories[student.combinationHistories.length - 1];
 
   return {
     student: {
@@ -765,12 +792,16 @@ export async function getStudentAttendanceReport(studentId: string) {
       fullName: student.fullName,
       enrollmentDate: student.enrollmentDate,
       status: student.status,
+      levelName: latestCombo?.level?.name ?? '',
+      subjectName: latestCombo?.level?.subject?.name ?? '',
+      combination: latestCombo ? `${latestCombo.level.subject.name} - ${latestCombo.level.name}` : '',
     },
     summary: {
       totalHeld: totalAttended + totalAbsent,
       totalAttended,
       totalAbsent,
     },
+    records: lessonsWithStatus,
     lessons: lessonsWithStatus,
   };
 }

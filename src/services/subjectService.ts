@@ -152,3 +152,98 @@ export async function updateLevel(id: string, data: { name?: string; isActive?: 
     include: { subject: true },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Permanent Subject Deletion (Admin only - BR-27)
+// ---------------------------------------------------------------------------
+
+export async function deleteSubjectPermanently(id: string) {
+  const subject = await prisma.subject.findUnique({
+    where: { id },
+    include: {
+      levels: true,
+    },
+  });
+  if (!subject) throw new AppError(404, 'SUBJECT_NOT_FOUND', 'Subject not found');
+
+  await prisma.$transaction(async (tx) => {
+    const levelIds = subject.levels.map((l) => l.id);
+
+    if (levelIds.length > 0) {
+      // 1. Get all lessons for these levels
+      const lessons = await tx.lesson.findMany({
+        where: { levelId: { in: levelIds } },
+        select: { id: true },
+      });
+      const lessonIds = lessons.map((l) => l.id);
+
+      if (lessonIds.length > 0) {
+        // 2. Get all attendances for those lessons
+        const attendances = await tx.attendance.findMany({
+          where: { lessonId: { in: lessonIds } },
+          select: { id: true },
+        });
+        const attendanceIds = attendances.map((a) => a.id);
+
+        if (attendanceIds.length > 0) {
+          // 3. Find charges linked to these attendances
+          const charges = await tx.charge.findMany({
+            where: { attendanceId: { in: attendanceIds } },
+            select: { id: true },
+          });
+          const chargeIds = charges.map((c) => c.id);
+
+          if (chargeIds.length > 0) {
+            // Delete payments on these charges
+            await tx.payment.deleteMany({
+              where: { chargeId: { in: chargeIds } },
+            });
+            // Delete the charges
+            await tx.charge.deleteMany({
+              where: { id: { in: chargeIds } },
+            });
+          }
+
+          // Delete attendances
+          await tx.attendance.deleteMany({
+            where: { id: { in: attendanceIds } },
+          });
+        }
+
+        // Delete lessons
+        await tx.lesson.deleteMany({
+          where: { id: { in: lessonIds } },
+        });
+      }
+
+      // 4. Delete fees for these levels
+      await tx.fee.deleteMany({
+        where: { levelId: { in: levelIds } },
+      });
+
+      // 5. Delete combination histories for these levels
+      await tx.studentCombinationHistory.deleteMany({
+        where: { levelId: { in: levelIds } },
+      });
+
+      // 6. Delete payment groups that have no payments remaining
+      await tx.paymentGroup.deleteMany({
+        where: {
+          payments: { none: {} },
+        },
+      });
+
+      // 7. Delete levels
+      await tx.level.deleteMany({
+        where: { id: { in: levelIds } },
+      });
+    }
+
+    // 8. Delete subject
+    await tx.subject.delete({
+      where: { id },
+    });
+  });
+
+  return { deleted: true, subjectId: id };
+}

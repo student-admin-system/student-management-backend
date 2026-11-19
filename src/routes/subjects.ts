@@ -112,6 +112,15 @@ router.patch('/:id', requireAdmin, validateBody(updateSubjectSchema), async (req
   }
 });
 
+router.delete('/:id', requireAdmin, async (req, res, next) => {
+  try {
+    const result = await subjectService.deleteSubjectPermanently(req.params.id as string);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 // Nested levels support: POST /:subjectId/levels
 router.post('/:subjectId/levels', requireAdmin, async (req, res, next) => {
   try {
