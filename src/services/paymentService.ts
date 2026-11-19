@@ -206,7 +206,42 @@ export async function createSubscriptionPayment(input: CreateSubscriptionPayment
   const subscriptionFee = fee ? fee.subscriptionFee : new Prisma.Decimal(0);
 
   return prisma.$transaction(async (tx) => {
-    // 1. Lock/update billing state to SUBSCRIPTION
+    // 1. Validate that the month is not already locked as PER_LESSON
+    const existingBillingState = await tx.monthlyBillingState.findUnique({
+      where: { studentId_month: { studentId, month } },
+    });
+
+    if (
+      existingBillingState &&
+      existingBillingState.isConfirmed &&
+      existingBillingState.method === 'PER_LESSON'
+    ) {
+      throw new AppError(
+        400,
+        'MONTH_LOCKED_PER_LESSON',
+        `طريقة المحاسبة لهذا الطالب مسجلة ومقفلة بنظام (الحصة الواحدة) لشهر (${month}). لا يمكن تسجيل اشتراك شهري لنفس الشهر، ويمكن للمدير فقط إعادة ضبط طريقة الدفع للشهر من صفحة ملف الطالب إذا لزم الأمر.`
+      );
+    }
+
+    // Also block if there are existing active Per-Lesson charges in this month
+    const existingPerLessonCharge = await tx.charge.findFirst({
+      where: {
+        studentId,
+        billedMonth: month,
+        type: 'PER_LESSON',
+        status: { not: 'VOIDED' },
+      },
+    });
+
+    if (existingPerLessonCharge) {
+      throw new AppError(
+        400,
+        'MONTH_LOCKED_PER_LESSON',
+        `طريقة المحاسبة لهذا الطالب مسجلة ومقفلة بنظام (الحصة الواحدة) لشهر (${month}) لوجود رسوم حصص مسجلة. لا يمكن تسجيل اشتراك شهري لنفس الشهر، ويمكن للمدير فقط إعادة ضبط طريقة الدفع للشهر من صفحة ملف الطالب إذا لزم الأمر.`
+      );
+    }
+
+    // 2. Lock/update billing state to SUBSCRIPTION
     await tx.monthlyBillingState.upsert({
       where: { studentId_month: { studentId, month } },
       update: {
@@ -223,7 +258,7 @@ export async function createSubscriptionPayment(input: CreateSubscriptionPayment
       },
     });
 
-    // 2. Check for existing subscription charge in that month
+    // 3. Check for existing subscription charge in that month
     const existingSubCharge = await tx.charge.findFirst({
       where: {
         studentId,
