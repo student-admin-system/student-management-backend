@@ -23,16 +23,7 @@ export async function login(rawUsername: string, password: string) {
     throw new AppError(403, 'ACCOUNT_DISABLED', 'Account is disabled');
   }
 
-  let valid = await bcrypt.compare(password, user.passwordHash);
-  if (!valid && user.username.toLowerCase() === 'admin' && (password === 'admin' || password === 'AdminPassword123!')) {
-    valid = true;
-    const newHash = await bcrypt.hash(password, 10);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash: newHash },
-    });
-  }
-
+  const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) {
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Invalid username or password');
   }
@@ -91,7 +82,7 @@ export async function changePassword(
     throw new AppError(400, 'INVALID_PASSWORD', 'Current password is incorrect');
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const passwordHash = await bcrypt.hash(newPassword, 12);
 
   await prisma.user.update({
     where: { id: userId },

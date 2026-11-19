@@ -27,7 +27,7 @@ export async function createUser(data: { username: string; password: string; nam
     throw new AppError(409, 'USERNAME_EXISTS', 'Username already exists');
   }
 
-  const passwordHash = await bcrypt.hash(data.password, 10);
+  const passwordHash = await bcrypt.hash(data.password, 12);
 
   const user = await prisma.user.create({
     data: {
@@ -99,7 +99,7 @@ export async function resetPassword(
     throw new AppError(400, 'INVALID_ROLE', 'Can only reset passwords for Assistant accounts');
   }
 
-  const passwordHash = await bcrypt.hash(newPassword, 10);
+  const passwordHash = await bcrypt.hash(newPassword, 12);
 
   await prisma.user.update({
     where: { id },

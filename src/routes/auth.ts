@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import * as authService from '../services/authService';
-import { authenticate, loginRateLimiter } from '../middleware/auth';
+import { authenticate, loginRateLimiter, clearLoginAttempts } from '../middleware/auth';
 import { validateBody } from '../middleware/validateRequest';
 import { AuthenticatedRequest } from '../types';
 
@@ -22,6 +22,8 @@ router.post('/login', loginRateLimiter, validateBody(loginSchema), async (req, r
   try {
     const { username, password } = req.body;
     const result = await authService.login(username, password);
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    clearLoginAttempts(ip);
     res.json(result);
   } catch (error) {
     next(error);

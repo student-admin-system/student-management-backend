@@ -15,6 +15,10 @@ const loginAttempts = new Map<string, RateLimitEntry>();
 const MAX_ATTEMPTS = 10;
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
+export function clearLoginAttempts(ip: string): void {
+  loginAttempts.delete(ip);
+}
+
 export function loginRateLimiter(
   req: AuthenticatedRequest,
   _res: Response,
@@ -33,10 +37,12 @@ export function loginRateLimiter(
       // Window expired, reset
       loginAttempts.set(ip, { count: 1, firstAttempt: now });
     } else if (entry.count >= MAX_ATTEMPTS) {
-      throw new AppError(
-        429,
-        'RATE_LIMIT_EXCEEDED',
-        'Too many login attempts. Please try again later.'
+      return next(
+        new AppError(
+          429,
+          'RATE_LIMIT_EXCEEDED',
+          'Too many login attempts. Please try again later.'
+        )
       );
     } else {
       entry.count++;
@@ -56,7 +62,7 @@ export function authenticate(
 ): void {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new AppError(401, 'UNAUTHORIZED', 'No token provided');
+    return next(new AppError(401, 'UNAUTHORIZED', 'No token provided'));
   }
 
   const token = authHeader.slice(7);
@@ -72,7 +78,7 @@ export function authenticate(
 
     const targetId = payload.id || payload.userId;
     if (!targetId) {
-      throw new AppError(401, 'UNAUTHORIZED', 'Invalid token payload');
+      return next(new AppError(401, 'UNAUTHORIZED', 'Invalid token payload'));
     }
 
     // Look up user to ensure they still exist and are active
@@ -96,7 +102,7 @@ export function authenticate(
     if (err instanceof AppError) {
       return next(err);
     }
-    throw new AppError(401, 'UNAUTHORIZED', 'Invalid or expired token');
+    return next(new AppError(401, 'UNAUTHORIZED', 'Invalid or expired token'));
   }
 }
 
@@ -109,7 +115,7 @@ export function requireAuth() {
 export function requireAdmin(req?: any, res?: any, next?: any): any {
   if (req && next && typeof next === 'function') {
     if (req.user?.role !== 'ADMIN') {
-      throw new AppError(403, 'FORBIDDEN', 'Admin access required');
+      return next(new AppError(403, 'FORBIDDEN', 'Admin access required'));
     }
     return next();
   }
@@ -117,7 +123,7 @@ export function requireAdmin(req?: any, res?: any, next?: any): any {
     authenticate,
     (req: AuthenticatedRequest, _res: Response, next: NextFunction) => {
       if (req.user?.role !== 'ADMIN') {
-        throw new AppError(403, 'FORBIDDEN', 'Admin access required');
+        return next(new AppError(403, 'FORBIDDEN', 'Admin access required'));
       }
       next();
     },

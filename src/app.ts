@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
-import { errorHandler } from './middleware/errorHandler';
+import helmet from 'helmet';
+import { errorHandler, AppError } from './middleware/errorHandler';
 
 // Route imports
 import authRoutes from './routes/auth';
@@ -18,8 +19,30 @@ import settingRoutes from './routes/settings';
 
 const app = express();
 
-// Middleware
-app.use(cors());
+// Security Headers (NFR-05)
+app.use(helmet());
+
+// CORS Configuration - Restrict to allowed origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV !== 'production') {
+        return callback(null, true);
+      }
+      return callback(new AppError(403, 'CORS_ERROR', 'Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
 app.use(express.json());
 
 // Root endpoint for status / info
@@ -47,6 +70,11 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/settings', settingRoutes);
+
+// 404 Catch-All handler for unmatched routes
+app.use((_req, _res, next) => {
+  next(new AppError(404, 'NOT_FOUND', 'API endpoint not found'));
+});
 
 // Error handler (must be last)
 app.use(errorHandler);
