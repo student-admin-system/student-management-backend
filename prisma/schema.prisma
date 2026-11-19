@@ -1,0 +1,275 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  ASSISTANT
+}
+
+enum StudentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum BillingMethod {
+  SUBSCRIPTION
+  PER_LESSON
+}
+
+enum ChargeType {
+  SUBSCRIPTION
+  PER_LESSON
+}
+
+enum ChargeStatus {
+  UNPAID
+  PAID
+  VOIDED
+  WAIVED
+}
+
+enum ChargeSource {
+  ATTENDANCE
+  MONTHLY_CONFIRMATION
+}
+
+model User {
+  id           String       @id @default(uuid())
+  username     String       @unique
+  passwordHash String
+  name         String
+  role         Role
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  attendances  Attendance[]
+  payments     Payment[]
+  paymentGroups PaymentGroup[]
+
+  @@map("users")
+}
+
+model Subject {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  levels    Level[]
+
+  @@map("subjects")
+}
+
+model Level {
+  id        String   @id @default(uuid())
+  subjectId String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subject   Subject  @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  fees      Fee[]
+  lessons   Lesson[]
+  combinationHistories StudentCombinationHistory[]
+
+  @@unique([subjectId, name])
+  @@map("levels")
+}
+
+model Fee {
+  id              String   @id @default(uuid())
+  levelId         String
+  month           String   // Format: YYYY-MM
+  subscriptionFee Decimal  @db.Decimal(10, 2)
+  perLessonFee    Decimal  @db.Decimal(10, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  level           Level    @relation(fields: [levelId], references: [id], onDelete: Restrict)
+
+  @@unique([levelId, month])
+  @@map("fees")
+}
+
+model Student {
+  id             String                 @id @default(uuid())
+  studentNumber  Int                    @unique @default(dbgenerated("nextval('student_number_seq'::regclass)"))
+  fullName       String
+  normalizedName String                 @default("")
+  enrollmentDate String                 // Format: YYYY-MM-DD
+  studentPhone   String?
+  guardianName   String?
+  guardianPhone  String?
+  school         String?
+  notes          String?
+  status         StudentStatus          @default(ACTIVE)
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  combinationHistories StudentCombinationHistory[]
+  statusHistories      StudentStatusHistory[]
+  billingStates        MonthlyBillingState[]
+  attendances          Attendance[]
+  charges              Charge[]
+  payments             Payment[]
+  paymentGroups        PaymentGroup[]
+
+  @@index([normalizedName])
+  @@map("students")
+}
+
+model StudentCombinationHistory {
+  id        String   @id @default(uuid())
+  studentId String
+  levelId   String
+  month     String   // Format: YYYY-MM
+  createdAt DateTime @default(now())
+
+  student   Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  level     Level    @relation(fields: [levelId], references: [id], onDelete: Restrict)
+
+  @@unique([studentId, month])
+  @@map("student_combination_history")
+}
+
+model StudentStatusHistory {
+  id            String        @id @default(uuid())
+  studentId     String
+  status        StudentStatus
+  effectiveDate String        // Format: YYYY-MM-DD
+  createdAt     DateTime      @default(now())
+
+  student       Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@map("student_status_history")
+}
+
+model Lesson {
+  id        String       @id @default(uuid())
+  levelId   String
+  date      String       // Format: YYYY-MM-DD
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  level       Level        @relation(fields: [levelId], references: [id], onDelete: Restrict)
+  attendances Attendance[]
+
+  @@unique([levelId, date]) // BR-15: At most one lesson per combination per date
+  @@map("lessons")
+}
+
+model Attendance {
+  id             String    @id @default(uuid())
+  studentId      String
+  lessonId       String
+  recordedById   String
+  entryTimestamp DateTime  @default(now())
+  isVoided       Boolean   @default(false)
+  voidedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  student        Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lesson         Lesson    @relation(fields: [lessonId], references: [id], onDelete: Restrict)
+  recordedBy     User      @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+  charges        Charge[]
+
+  @@index([studentId, lessonId])
+  @@map("attendances")
+}
+
+model MonthlyBillingState {
+  id          String        @id @default(uuid())
+  studentId   String
+  month       String        // Format: YYYY-MM
+  method      BillingMethod
+  isConfirmed Boolean       @default(false)
+  confirmedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  student     Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, month])
+  @@map("monthly_billing_states")
+}
+
+model Charge {
+  id           String       @id @default(uuid())
+  studentId    String
+  billedMonth  String       // Format: YYYY-MM
+  type         ChargeType
+  amount       Decimal      @db.Decimal(10, 2)
+  source       ChargeSource
+  attendanceId String?
+  status       ChargeStatus @default(UNPAID)
+  waivedAt     DateTime?
+  voidedAt     DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  attendance   Attendance?  @relation(fields: [attendanceId], references: [id], onDelete: SetNull)
+  payments     Payment[]
+
+  @@map("charges")
+}
+
+model PaymentGroup {
+  id             String    @id @default(uuid())
+  studentId      String
+  receivedOn     String    // Format: YYYY-MM-DD
+  entryTimestamp DateTime  @default(now())
+  recordedById   String
+  totalAmount    Decimal   @db.Decimal(10, 2)
+  isVoided       Boolean   @default(false)
+  voidedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  student        Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  recordedBy     User      @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+  payments       Payment[]
+
+  @@map("payment_groups")
+}
+
+model Payment {
+  id             String       @id @default(uuid())
+  paymentGroupId String
+  studentId      String
+  chargeId       String
+  amount         Decimal      @db.Decimal(10, 2)
+  receivedOn     String       // Format: YYYY-MM-DD
+  entryTimestamp DateTime     @default(now())
+  recordedById   String
+  isVoided       Boolean      @default(false)
+  voidedAt       DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  paymentGroup   PaymentGroup @relation(fields: [paymentGroupId], references: [id], onDelete: Cascade)
+  student        Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  charge         Charge       @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  recordedBy     User         @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+
+  @@index([chargeId])
+  @@map("payments")
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
